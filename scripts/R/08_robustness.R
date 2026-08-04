@@ -57,23 +57,31 @@ cat(sprintf("  2SLS β(risk) = %.4f (SE = %.4f)\n",
             coef(m_2sls)["fit_risk"], se(m_2sls)["fit_risk"]))
 
 # =============================================================================
-# 2.  LIML via ivreg
+# 2.  LIML note + over-identified approximation
 # =============================================================================
 
+# With a single instrument (logmort0) and single endogenous variable (risk),
+# the model is EXACTLY IDENTIFIED → LIML = 2SLS analytically.
+# LIML only differs from 2SLS in over-identified models (more instruments than
+# endogenous variables). We note this and report the 2SLS estimate as LIML.
+
 cat("LIML estimation...\n")
-# ivreg syntax: outcome ~ exo_controls + endo | exo_controls + instruments
-m_liml <- ivreg(loggdp ~ risk | logmort0,
-                data = df, method = "LIML")
-m_liml_lat <- ivreg(loggdp ~ risk + lat | logmort0 + lat,
-                    data = df %>% filter(!is.na(lat)), method = "LIML")
+cat("  Note: model is just-identified (1 instrument, 1 endogenous variable).\n")
+cat("  LIML = 2SLS exactly in just-identified models (Anderson & Rubin 1949).\n")
 
-cat(sprintf("  LIML β(risk) = %.4f (SE = %.4f)\n",
-            coef(m_liml)["risk"],
-            sqrt(vcov(m_liml)["risk", "risk"])))
+liml_est <- coef(m_2sls)["fit_risk"]
+liml_se  <- se(m_2sls)["fit_risk"]
 
-# Compute HC1-like se manually for LIML
-vcov_liml     <- sandwich::vcovHC(m_liml,     type = "HC1")
-vcov_liml_lat <- sandwich::vcovHC(m_liml_lat, type = "HC1")
+# For the + latitude spec (still just-identified)
+m_liml_lat <- feols(loggdp ~ lat | risk ~ logmort0,
+                    data = df %>% filter(!is.na(lat)), vcov = "HC1")
+
+cat(sprintf("  LIML β(risk) = %.4f (SE = %.4f) [= 2SLS, just-identified]\n",
+            liml_est, liml_se))
+
+# Placeholders for comparison table
+vcov_liml     <- vcov(m_2sls)
+vcov_liml_lat <- vcov(m_liml_lat)
 
 # =============================================================================
 # 3.  JIVE (Jackknife IV Estimator, Angrist et al. 1999)
@@ -111,20 +119,20 @@ cat(sprintf("  JIVE β(risk) = %.4f (SE = %.4f)\n", jive_est, jive_se))
 
 # Build a simple comparison table manually (different model types)
 comparison <- tibble(
-  Estimator     = c("2SLS (fixest)", "LIML (ivreg)", "LIML + Latitude", "JIVE"),
+  Estimator     = c("2SLS (fixest)", "LIML = 2SLS (just-identified)", "LIML + Latitude", "JIVE"),
   beta_inst     = c(
     coef(m_2sls)["fit_risk"],
-    coef(m_liml)["risk"],
-    coef(m_liml_lat)["risk"],
+    liml_est,
+    coef(m_liml_lat)["fit_risk"],
     jive_est
   ),
   se_inst       = c(
     se(m_2sls)["fit_risk"],
-    sqrt(vcov_liml["risk", "risk"]),
-    sqrt(vcov_liml_lat["risk", "risk"]),
+    liml_se,
+    se(m_liml_lat)["fit_risk"],
     jive_se
   ),
-  n_obs         = c(nobs(m_2sls), nrow(df), sum(!is.na(df$lat)), nrow(df))
+  n_obs         = c(nobs(m_2sls), nrow(df), nobs(m_liml_lat), nrow(df))
 ) %>%
   mutate(
     ci_lo   = beta_inst - 1.96 * se_inst,
